@@ -11,6 +11,7 @@ from .utils import update_db_object
 # from .constants import CACHE_TTL # If get_module was cached
 from core.cache import cached # Исправленный импорт
 from . import constants # Added import
+from app.exceptions.crud_exceptions import NotFoundException, DuplicateEntryException, DatabaseOperationException
 
 import logging
 # import crud_user_progress
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # --- CRUD для Модулей (Module) ---
 @cached(ttl=constants.CACHE_TTL) # Add if get_module was cached in original crud.py
-def get_module(db: Session, module_id: int, user_id: Optional[int] = None) -> Optional[models.Module]:
+def get_module(db: Session, module_id: int, user_id: Optional[int] = None) -> models.Module:
     query = db.query(models.Module).filter(models.Module.id == module_id)
     query = query.options(
         selectinload(models.Module.lessons)
@@ -30,7 +31,7 @@ def get_module(db: Session, module_id: int, user_id: Optional[int] = None) -> Op
     module = query.first()
 
     if not module:
-        return None
+        raise NotFoundException(entity_name="Модуль", entity_id=module_id)
 
     if user_id:
         # Augment with progress information
@@ -72,58 +73,69 @@ def get_all_modules(db: Session, skip: int = 0, limit: int = 100) -> List[models
 
 def create_module(db: Session, module_data: schemas.ModuleCreate) -> models.Module:
     try:
-        # Ensure discipline exists (moved from main.py, good practice to have it here or in a service layer)
+        # Проверяем существование дисциплины
         discipline = db.query(models.Discipline).filter(models.Discipline.id == module_data.discipline_id).first()
         if not discipline:
-            # This should ideally raise an HTTPException or a custom CRUD exception that main.py can catch
-            logger.warning(f"Discipline with ID {module_data.discipline_id} not found when creating module.")
-            # Consider how to signal this error. Returning None might be ambiguous.
-            # For now, let the original logic in main.py handle the HTTPException if it checks this.
-            # However, better to raise a specific error here.
-            pass # Or raise error
+            raise NotFoundException(entity_name="Дисциплина", entity_id=module_data.discipline_id)
+
+        # Проверка на дубликат названия модуля в рамках дисциплины
+        existing_module = get_module_by_title(db, module_data.title, module_data.discipline_id)
+        if existing_module:
+            raise DuplicateEntryException(entity_name="Модуль", conflicting_field="title в рамках дисциплины", conflicting_value=module_data.title)
 
         db_module = models.Module(**module_data.model_dump())
         db.add(db_module)
         db.commit()
         db.refresh(db_module)
         return db_module
+    except (NotFoundException, DuplicateEntryException):
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating module: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось создать модуль: {str(e)}")
 
-def update_module(db: Session, module_id: int, module_update: schemas.ModuleUpdate) -> Optional[models.Module]:
+def update_module(db: Session, module_id: int, module_update: schemas.ModuleUpdate) -> models.Module:
     try:
-        db_module = get_module(db, module_id) # Potentially without user_id for update context
+        db_module = db.query(models.Module).filter(models.Module.id == module_id).first()
         if not db_module:
-            return None
+            raise NotFoundException(entity_name="Модуль для обновления", entity_id=module_id)
         
         if module_update.discipline_id is not None:
             discipline = db.query(models.Discipline).filter(models.Discipline.id == module_update.discipline_id).first()
             if not discipline:
-                logger.warning(f"Target discipline {module_update.discipline_id} not found for module update.")
-                # Similar to create, how to signal this? main.py might raise HTTPException.
-                return None # Indicate error or raise specific exception
+                raise NotFoundException(entity_name="Дисциплина для переноса модуля", entity_id=module_update.discipline_id)
+                
+        # Проверка на дубликат названия, если название меняется и меняется дисциплина
+        if module_update.title and module_update.title != db_module.title or module_update.discipline_id and module_update.discipline_id != db_module.discipline_id:
+            target_discipline_id = module_update.discipline_id if module_update.discipline_id is not None else db_module.discipline_id
+            existing = get_module_by_title(db, module_update.title or db_module.title, target_discipline_id)
+            if existing and existing.id != module_id:
+                raise DuplicateEntryException(entity_name="Модуль", conflicting_field="title в рамках дисциплины", conflicting_value=module_update.title or db_module.title)
 
         updated_module = update_db_object(db_module, module_update)
         db.add(updated_module)
         db.commit()
         db.refresh(updated_module)
         return updated_module
+    except (NotFoundException, DuplicateEntryException):
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating module {module_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить модуль: {str(e)}")
 
 def delete_module(db: Session, module_id: int) -> bool:
     try:
-        db_module = get_module(db, module_id) # Potentially without user_id
+        db_module = db.query(models.Module).filter(models.Module.id == module_id).first()
         if not db_module:
-            return False
+            raise NotFoundException(entity_name="Модуль для удаления", entity_id=module_id)
         db.delete(db_module)
         db.commit()
         return True
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting module {module_id}: {e}", exc_info=True)
-        raise 
+        raise DatabaseOperationException(f"Не удалось удалить модуль: {str(e)}") 

@@ -10,13 +10,14 @@ from .utils import update_db_object
 from core.cache import cached # Исправленный импорт
 from . import constants # Ensured constants import is correct form
 from . import crud_user_progress # Added import for crud_user_progress
+from app.exceptions.crud_exceptions import NotFoundException, DuplicateEntryException, InvalidInputException, DatabaseOperationException
 
 import logging
 logger = logging.getLogger(__name__)
 
 # --- CRUD для Уроков (Lesson) ---
 @cached(ttl=constants.CACHE_TTL) # Add if get_lesson was cached
-def get_lesson(db: Session, lesson_id: int, user_id: Optional[int] = None) -> Optional[models.Lesson]:
+def get_lesson(db: Session, lesson_id: int, user_id: Optional[int] = None) -> models.Lesson:
     query = db.query(models.Lesson).filter(models.Lesson.id == lesson_id)
     # Eager load related data like blocks, questions, options
     query = query.options(
@@ -27,7 +28,7 @@ def get_lesson(db: Session, lesson_id: int, user_id: Optional[int] = None) -> Op
     lesson = query.first()
 
     if not lesson:
-        return None
+        raise NotFoundException(entity_name="Урок", entity_id=lesson_id)
 
     if user_id:
         # Augment with user-specific progress
@@ -80,9 +81,12 @@ def create_lesson(db: Session, lesson_data: schemas.LessonCreate) -> models.Less
     try:
         module = db.query(models.Module).filter(models.Module.id == lesson_data.module_id).first()
         if not module:
-            logger.warning(f"Module with ID {lesson_data.module_id} not found when creating lesson.")
-            # Propagate error appropriately, e.g., by raising ValueError to be caught by endpoint
-            raise ValueError(f"Module {lesson_data.module_id} not found")
+            raise NotFoundException(entity_name="Модуль для создания урока", entity_id=lesson_data.module_id)
+
+        # Проверка на дубликат названия урока в рамках модуля
+        existing_lesson = get_lesson_by_title(db, lesson_data.title, lesson_data.module_id)
+        if existing_lesson:
+            raise DuplicateEntryException(entity_name="Урок", conflicting_field="title в рамках модуля", conflicting_value=lesson_data.title)
 
         # Create base lesson object
         db_lesson = models.Lesson(
@@ -134,28 +138,30 @@ def create_lesson(db: Session, lesson_data: schemas.LessonCreate) -> models.Less
         
         return db_lesson
         
-    except ValueError as ve: # Catch module not found
-        db.rollback()
-        logger.error(f"Value error creating lesson: {str(ve)}")
-        raise # Re-raise for endpoint to handle
+    except (NotFoundException, DuplicateEntryException):
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating lesson: {str(e)}", exc_info=True)
-        # Consider raising a more specific error or HTTPException if this CRUD is directly used by API
-        # For now, re-raising the generic exception, but endpoint should catch it.
-        raise
+        raise DatabaseOperationException(f"Не удалось создать урок: {str(e)}")
 
-def update_lesson(db: Session, lesson_id: int, lesson_update: schemas.LessonUpdate) -> Optional[models.Lesson]:
+def update_lesson(db: Session, lesson_id: int, lesson_update: schemas.LessonUpdate) -> models.Lesson:
     try:
-        db_lesson = get_lesson(db, lesson_id) # user_id likely not needed for admin update context
+        db_lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
         if not db_lesson:
-            return None
+            raise NotFoundException(entity_name="Урок для обновления", entity_id=lesson_id)
 
         if lesson_update.module_id is not None:
             module = db.query(models.Module).filter(models.Module.id == lesson_update.module_id).first()
             if not module:
-                logger.warning(f"Target module {lesson_update.module_id} not found for lesson update.")
-                return None
+                raise NotFoundException(entity_name="Модуль для переноса урока", entity_id=lesson_update.module_id)
+                
+        # Проверка на дубликат названия, если название меняется или меняется модуль
+        if lesson_update.title and lesson_update.title != db_lesson.title or lesson_update.module_id and lesson_update.module_id != db_lesson.module_id:
+            target_module_id = lesson_update.module_id if lesson_update.module_id is not None else db_lesson.module_id
+            existing = get_lesson_by_title(db, lesson_update.title or db_lesson.title, target_module_id)
+            if existing and existing.id != lesson_id:
+                raise DuplicateEntryException(entity_name="Урок", conflicting_field="title в рамках модуля", conflicting_value=lesson_update.title or db_lesson.title)
         
         # Handle update of nested structures like blocks if schema supports it and original did it.
         # This is complex: involves diffing, creating new, updating existing, deleting old.
@@ -179,16 +185,18 @@ def update_lesson(db: Session, lesson_id: int, lesson_update: schemas.LessonUpda
         db.commit()
         db.refresh(db_lesson)
         return db_lesson
+    except (NotFoundException, DuplicateEntryException):
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating lesson {lesson_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить урок: {str(e)}")
 
 def delete_lesson(db: Session, lesson_id: int) -> bool:
     try:
-        db_lesson = get_lesson(db, lesson_id)
+        db_lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
         if not db_lesson:
-            return False
+            raise NotFoundException(entity_name="Урок для удаления", entity_id=lesson_id)
         
         # Add logic here to delete associated blocks, questions, options if cascading delete is not set up in DB/ORM
         # For example:
@@ -204,7 +212,9 @@ def delete_lesson(db: Session, lesson_id: int) -> bool:
         db.delete(db_lesson)
         db.commit()
         return True
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting lesson {lesson_id}: {e}", exc_info=True)
-        raise 
+        raise DatabaseOperationException(f"Не удалось удалить урок: {str(e)}") 

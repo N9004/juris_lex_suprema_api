@@ -8,6 +8,7 @@ import schemas
 from .utils import update_db_object
 from core.cache import cached # Исправленный импорт
 from . import constants # Corrected import
+from app.exceptions.crud_exceptions import NotFoundException, DuplicateEntryException, InvalidInputException, DatabaseOperationException
 
 import logging
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ from . import crud_user_progress # Corrected import
 
 # --- CRUD для Блоков Урока (LessonBlock) ---
 @cached(ttl=constants.CACHE_TTL) # If get_lesson_block was cached
-def get_lesson_block(db: Session, block_id: int, user_id: Optional[int] = None) -> Optional[models.LessonBlock]:
+def get_lesson_block(db: Session, block_id: int, user_id: Optional[int] = None) -> models.LessonBlock:
     query = db.query(models.LessonBlock).filter(models.LessonBlock.id == block_id)
     query = query.options(
         selectinload(models.LessonBlock.questions)
@@ -25,7 +26,7 @@ def get_lesson_block(db: Session, block_id: int, user_id: Optional[int] = None) 
     )
     block = query.first()
     if not block:
-        return None
+        raise NotFoundException(entity_name="Блок урока", entity_id=block_id)
     
     if user_id and block.lesson:
         # is_completed_by_user on a block context usually means if the *lesson* it belongs to is completed.
@@ -66,8 +67,7 @@ def create_lesson_block(db: Session, lesson_id: int, block_data: schemas.LessonB
     try:
         lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
         if not lesson:
-            logger.warning(f"Lesson with ID {lesson_id} not found when creating block.")
-            raise ValueError(f"Lesson {lesson_id} not found")
+            raise NotFoundException(entity_name="Урок для создания блока", entity_id=lesson_id)
 
         # Create base block object
         db_block = models.LessonBlock(
@@ -109,16 +109,14 @@ def create_lesson_block(db: Session, lesson_id: int, block_data: schemas.LessonB
         db.refresh(db_block)
         return db_block
         
-    except ValueError as ve: # Catch lesson not found
-        db.rollback()
-        logger.error(f"Value error creating lesson block: {str(ve)}")
+    except NotFoundException:
         raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating lesson block for lesson {lesson_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось создать блок урока: {str(e)}")
 
-def update_lesson_block(db: Session, block_id: int, block_update: schemas.LessonBlockUpdate) -> Optional[models.LessonBlock]:
+def update_lesson_block(db: Session, block_id: int, block_update: schemas.LessonBlockUpdate) -> models.LessonBlock:
     # Original crud.py lines 670-758
     try:
         db_block = db.query(models.LessonBlock).options(
@@ -126,7 +124,7 @@ def update_lesson_block(db: Session, block_id: int, block_update: schemas.Lesson
         ).filter(models.LessonBlock.id == block_id).first()
 
         if not db_block:
-            return None
+            raise NotFoundException(entity_name="Блок урока для обновления", entity_id=block_id)
 
         # Update scalar fields of the block
         update_data_dict = block_update.model_dump(exclude_unset=True, exclude={"questions"}) # Exclude questions for now
@@ -208,17 +206,19 @@ def update_lesson_block(db: Session, block_id: int, block_update: schemas.Lesson
         db.refresh(db_block)
         return db_block
 
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating lesson block {block_id}: {str(e)}", exc_info=True)
         # Re-raise to be handled by endpoint, possibly as HTTPException
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить блок урока: {str(e)}")
 
 def delete_lesson_block(db: Session, block_id: int) -> bool:
     try:
-        db_block = get_lesson_block(db, block_id)
+        db_block = db.query(models.LessonBlock).filter(models.LessonBlock.id == block_id).first()
         if not db_block:
-            return False
+            raise NotFoundException(entity_name="Блок урока для удаления", entity_id=block_id)
         
         # Add logic here to delete associated questions and options if cascading delete is not set up
         # db.query(models.QuestionOption).join(models.Question).filter(models.Question.lesson_block_id == block_id).delete(synchronize_session=False)
@@ -227,7 +227,9 @@ def delete_lesson_block(db: Session, block_id: int) -> bool:
         db.delete(db_block)
         db.commit()
         return True
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting lesson block {block_id}: {e}", exc_info=True)
-        raise 
+        raise DatabaseOperationException(f"Не удалось удалить блок урока: {str(e)}") 

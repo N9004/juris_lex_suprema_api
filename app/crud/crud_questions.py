@@ -8,6 +8,7 @@ import schemas
 from .utils import update_db_object
 from core.cache import cached
 from . import constants
+from app.exceptions.crud_exceptions import NotFoundException, DuplicateEntryException, InvalidInputException, DatabaseOperationException
 
 import logging
 from . import crud_user_progress
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # --- CRUD для Вопросов (Question) ---
 @cached(ttl=constants.CACHE_TTL)
-def get_question(db: Session, question_id: int, user_id: Optional[int] = None) -> Optional[models.Question]:
+def get_question(db: Session, question_id: int, user_id: Optional[int] = None) -> models.Question:
     query = db.query(models.Question).filter(models.Question.id == question_id)
     query = query.options(
         selectinload(models.Question.options),
@@ -24,7 +25,7 @@ def get_question(db: Session, question_id: int, user_id: Optional[int] = None) -
     )
     question = query.first()
     if not question:
-        return None
+        raise NotFoundException(entity_name="Вопрос", entity_id=question_id)
     
     if user_id and question.lesson_block and question.lesson_block.lesson:
         # A question's "is_completed_by_user" status is typically tied to its parent lesson's completion.
@@ -68,8 +69,7 @@ def create_question(db: Session, block_id: int, question_data: schemas.QuestionC
     try:
         block = db.query(models.LessonBlock).filter(models.LessonBlock.id == block_id).first()
         if not block:
-            logger.warning(f"Block with ID {block_id} not found when creating question.")
-            raise ValueError(f"Block {block_id} not found")
+            raise NotFoundException(entity_name="Блок урока для создания вопроса", entity_id=block_id)
 
         options_data = question_data.options or []
         db_question = models.Question(
@@ -97,14 +97,12 @@ def create_question(db: Session, block_id: int, question_data: schemas.QuestionC
         db.refresh(db_question) # Refresh to load options relation if needed
         
         return db_question
-    except ValueError as ve:
-        db.rollback()
-        logger.error(f"Value error creating question for block {block_id}: {str(ve)}")
+    except NotFoundException:
         raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating question for block {block_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось создать вопрос: {str(e)}")
 
 def create_questions_batch(db: Session, block_id: int, questions_data: List[schemas.QuestionCreate]) -> List[models.Question]:
     """Creates multiple questions with their options for a given block_id."""
@@ -116,7 +114,7 @@ def create_questions_batch(db: Session, block_id: int, questions_data: List[sche
     try:
         block = db.query(models.LessonBlock).filter(models.LessonBlock.id == block_id).first()
         if not block:
-            raise ValueError(f"Block {block_id} not found for batch question creation")
+            raise NotFoundException(entity_name="Блок урока для создания группы вопросов", entity_id=block_id)
 
         temp_questions_to_add = []
         for question_schema in questions_data:
@@ -152,22 +150,20 @@ def create_questions_batch(db: Session, block_id: int, questions_data: List[sche
             
         return db_questions
 
-    except ValueError as ve:
-        db.rollback()
-        logger.error(f"Value error in create_questions_batch for block {block_id}: {str(ve)}")
+    except NotFoundException:
         raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating questions batch for block {block_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось создать группу вопросов: {str(e)}")
 
-def update_question(db: Session, question_id: int, question_update: schemas.QuestionUpdate) -> Optional[models.Question]:
+def update_question(db: Session, question_id: int, question_update: schemas.QuestionUpdate) -> models.Question:
     """Updates a single question and its options."""
     # Logic derived from update_lesson_block for nested entities in original crud.py
     try:
         db_question = db.query(models.Question).options(selectinload(models.Question.options)).filter(models.Question.id == question_id).first()
         if not db_question:
-            return None
+            raise NotFoundException(entity_name="Вопрос для обновления", entity_id=question_id)
 
         # Update scalar fields of the question
         question_scalar_data = question_update.model_dump(exclude_unset=True, exclude={"options", "id"})
@@ -201,10 +197,12 @@ def update_question(db: Session, question_id: int, question_update: schemas.Ques
         db.commit()
         db.refresh(db_question) # Refresh to get all changes and updated/new options
         return db_question
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating question {question_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить вопрос: {str(e)}")
 
 def update_questions_batch(db: Session, questions_data: List[Tuple[int, schemas.QuestionUpdate]]) -> List[models.Question]:
     """Updates multiple questions and their options."""
@@ -214,9 +212,13 @@ def update_questions_batch(db: Session, questions_data: List[Tuple[int, schemas.
         for q_id, q_update_data in questions_data:
             # Need to ensure QuestionUpdate schema passed to update_question is correct
             # The Tuple is (id, Schema). So q_update_data is already QuestionUpdate.
-            updated_q = update_question(db, q_id, q_update_data)
-            if updated_q:
+            try:
+                updated_q = update_question(db, q_id, q_update_data)
                 updated_questions.append(updated_q)
+            except NotFoundException:
+                logger.warning(f"Вопрос с ID {q_id} не найден при групповом обновлении")
+                # Продолжаем с остальными вопросами
+                continue
         # Commits are handled within update_question, so no final commit here needed if that pattern is kept.
         return updated_questions
     except Exception as e:
@@ -224,7 +226,7 @@ def update_questions_batch(db: Session, questions_data: List[Tuple[int, schemas.
         # However, if an error happens in the loop itself, a rollback here is good.
         db.rollback() 
         logger.error(f"Error in update_questions_batch: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить группу вопросов: {str(e)}")
 
 def delete_question(db: Session, question_id: int) -> bool:
     """Deletes a single question and its associated options."""
@@ -232,7 +234,7 @@ def delete_question(db: Session, question_id: int) -> bool:
     try:
         db_question = db.query(models.Question).options(selectinload(models.Question.options)).filter(models.Question.id == question_id).first()
         if not db_question:
-            return False
+            raise NotFoundException(entity_name="Вопрос для удаления", entity_id=question_id)
         
         # Explicitly delete options if cascade isn't 'all, delete-orphan' or to be certain
         # The original delete_questions_batch (lines 892-895) did this.
@@ -244,10 +246,12 @@ def delete_question(db: Session, question_id: int) -> bool:
         db.delete(db_question)
         db.commit()
         return True
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting question {question_id}: {e}", exc_info=True)
-        raise # Re-raise to be handled by endpoint
+        raise DatabaseOperationException(f"Не удалось удалить вопрос: {str(e)}")
 
 def delete_questions_batch(db: Session, question_ids: List[int]) -> bool:
     """Deletes multiple questions and their associated options."""
@@ -270,65 +274,69 @@ def delete_questions_batch(db: Session, question_ids: List[int]) -> bool:
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting questions batch: {e}", exc_info=True)
-        # Depending on desired behavior, might return False or re-raise
-        # For consistency with original, raising exception.
-        raise
+        raise DatabaseOperationException(f"Не удалось удалить группу вопросов: {str(e)}")
 
 # --- CRUD для Опций Вопросов (QuestionOption) ---
-def get_question_option(db: Session, option_id: int) -> Optional[models.QuestionOption]:
-    return db.query(models.QuestionOption).filter(models.QuestionOption.id == option_id).first()
+def get_question_option(db: Session, option_id: int) -> models.QuestionOption:
+    option = db.query(models.QuestionOption).filter(models.QuestionOption.id == option_id).first()
+    if not option:
+        raise NotFoundException(entity_name="Вариант ответа", entity_id=option_id)
+    return option
 
 def create_question_option(db: Session, question_id: int, option_data: schemas.QuestionOptionCreate) -> models.QuestionOption:
     try:
         # Ensure question exists
         question = db.query(models.Question).filter(models.Question.id == question_id).first()
         if not question:
-            logger.warning(f"Question with ID {question_id} not found when creating option.")
-            # Raise error or return None
-            pass 
+            raise NotFoundException(entity_name="Вопрос для создания варианта ответа", entity_id=question_id)
 
         db_option = models.QuestionOption(**option_data.model_dump(), question_id=question_id)
         db.add(db_option)
         db.commit()
         db.refresh(db_option)
         return db_option
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating question option for question {question_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось создать вариант ответа: {str(e)}")
 
-def update_question_option(db: Session, option_id: int, option_update: schemas.QuestionOptionUpdate) -> Optional[models.QuestionOption]:
+def update_question_option(db: Session, option_id: int, option_update: schemas.QuestionOptionUpdate) -> models.QuestionOption:
     try:
-        db_option = get_question_option(db, option_id)
+        db_option = db.query(models.QuestionOption).filter(models.QuestionOption.id == option_id).first()
         if not db_option:
-            return None
+            raise NotFoundException(entity_name="Вариант ответа для обновления", entity_id=option_id)
         
         # Ensure question_id in update data matches if provided, or is not changed to an invalid one.
         if option_update.question_id is not None and option_update.question_id != db_option.question_id:
             target_question = db.query(models.Question).filter(models.Question.id == option_update.question_id).first()
             if not target_question:
-                logger.warning(f"Target question {option_update.question_id} not found for option update.")
-                return None # Or raise
+                raise NotFoundException(entity_name="Вопрос для привязки варианта ответа", entity_id=option_update.question_id)
 
         updated_option = update_db_object(db_option, option_update)
         db.add(updated_option)
         db.commit()
         db.refresh(updated_option)
         return updated_option
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating question option {option_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить вариант ответа: {str(e)}")
 
 def delete_question_option(db: Session, option_id: int) -> bool:
     try:
-        db_option = get_question_option(db, option_id)
+        db_option = db.query(models.QuestionOption).filter(models.QuestionOption.id == option_id).first()
         if not db_option:
-            return False
+            raise NotFoundException(entity_name="Вариант ответа для удаления", entity_id=option_id)
         db.delete(db_option)
         db.commit()
         return True
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting question option {option_id}: {e}", exc_info=True)
-        raise 
+        raise DatabaseOperationException(f"Не удалось удалить вариант ответа: {str(e)}") 

@@ -14,6 +14,7 @@ from .constants import (
     XP_FOR_CORRECT_ANSWER
 )
 from core.cache import cached, clear_cache_for_function
+from app.exceptions.crud_exceptions import NotFoundException, DuplicateEntryException, InvalidInputException, DatabaseOperationException
 # TODO: from .crud_users import get_user_stats # For award_xp cache clearing, if direct call is preferred
 
 import logging
@@ -146,18 +147,16 @@ def award_xp(db: Session, user: models.User, xp_points: int):
             logger.error(f"Could not clear get_user_stats cache for user {user.id}: {e_cache}")
         logger.info(f"Awarded {xp_points} XP to user {user.id}. New total: {user.xp_points}")
 
-def mark_lesson_as_completed(db: Session, user_id: int, lesson_id: int) -> Optional[models.UserLessonProgress]:
+def mark_lesson_as_completed(db: Session, user_id: int, lesson_id: int) -> models.UserLessonProgress:
     """Marks a lesson as completed for a user, awards XP, and clears relevant caches."""
     try:
         user = db.query(models.User).filter(models.User.id == user_id).with_for_update().first()
         lesson = db.query(models.Lesson).filter(models.Lesson.id == lesson_id).first()
 
         if not user:
-            logger.warning(f"User {user_id} not found for marking lesson completion.")
-            return None
+            raise NotFoundException(entity_name="Пользователь для отметки завершения урока", entity_id=user_id)
         if not lesson:
-            logger.warning(f"Lesson {lesson_id} not found for marking completion.")
-            return None
+            raise NotFoundException(entity_name="Урок для отметки завершения", entity_id=lesson_id)
 
         progress = db.query(models.UserLessonProgress).filter(
             models.UserLessonProgress.user_id == user_id,
@@ -214,10 +213,12 @@ def mark_lesson_as_completed(db: Session, user_id: int, lesson_id: int) -> Optio
         setattr(progress, 'current_total_user_xp', user.xp_points)
         
         return progress
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error marking lesson {lesson_id} completed for user {user_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось отметить урок как завершенный: {str(e)}")
 
 def submit_question_answer(db: Session, user_id: int, question_id: int, user_answer: Any) -> Dict[str, Any]:
     """Submits a user's answer to a question, records progress, awards XP, and clears cache."""
@@ -228,11 +229,9 @@ def submit_question_answer(db: Session, user_id: int, question_id: int, user_ans
         ).filter(models.Question.id == question_id).first()
         
         if not user:
-            logger.warning(f"User {user_id} not found for submitting answer.")
-            raise ValueError("User not found") 
+            raise NotFoundException(entity_name="Пользователь для ответа на вопрос", entity_id=user_id)
         if not question:
-            logger.warning(f"Question {question_id} not found for submitting answer.")
-            raise ValueError("Question not found")
+            raise NotFoundException(entity_name="Вопрос", entity_id=question_id)
         
         is_correct = False
         correct_answer_details = {}
@@ -301,14 +300,12 @@ def submit_question_answer(db: Session, user_id: int, question_id: int, user_ans
             "correct_answer_details": correct_answer_details,
             "xp_awarded": xp_awarded
         }
-    except ValueError as ve: 
-        db.rollback() 
-        logger.warning(str(ve))
-        raise 
+    except NotFoundException: 
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error submitting answer for question {question_id} by user {user_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось отправить ответ на вопрос: {str(e)}")
 
 def get_user_question_progress(db: Session, user_id: int, question_id: int) -> Optional[models.UserQuestionProgress]:
     return db.query(models.UserQuestionProgress).filter(

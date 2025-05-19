@@ -8,12 +8,13 @@ import models
 import schemas
 from .utils import update_db_object
 from . import crud_user_progress
+from app.exceptions.crud_exceptions import NotFoundException, DuplicateEntryException, DatabaseOperationException
 
 import logging
 logger = logging.getLogger(__name__)
 
 # --- CRUD для Дисциплин (Discipline) ---
-def get_discipline(db: Session, discipline_id: int, user_id: Optional[int] = None) -> Optional[models.Discipline]:
+def get_discipline(db: Session, discipline_id: int, user_id: Optional[int] = None) -> models.Discipline:
     query = db.query(models.Discipline).filter(models.Discipline.id == discipline_id)
     
     if user_id:
@@ -24,7 +25,7 @@ def get_discipline(db: Session, discipline_id: int, user_id: Optional[int] = Non
         )
         discipline = query.first()
         if not discipline:
-            return None
+            raise NotFoundException(entity_name="Дисциплина", entity_id=discipline_id)
 
         # Augment with progress information (mimicking original logic)
         # Discipline progress (total vs completed lessons in discipline)
@@ -43,7 +44,10 @@ def get_discipline(db: Session, discipline_id: int, user_id: Optional[int] = Non
             selectinload(models.Discipline.modules)
             .selectinload(models.Module.lessons)
         )
-        return query.first()
+        discipline = query.first()
+        if not discipline:
+            raise NotFoundException(entity_name="Дисциплина", entity_id=discipline_id)
+        return discipline
 
 def get_discipline_by_title(db: Session, title: str) -> Optional[models.Discipline]:
     return db.query(models.Discipline).filter(models.Discipline.title == title).first()
@@ -72,40 +76,59 @@ def get_disciplines(db: Session, skip: int = 0, limit: int = 100, user_id: Optio
 
 def create_discipline(db: Session, discipline_data: schemas.DisciplineCreate) -> models.Discipline:
     try:
+        # Проверка на существующую дисциплину с таким же названием
+        existing_discipline = get_discipline_by_title(db, discipline_data.title)
+        if existing_discipline:
+            raise DuplicateEntryException(entity_name="Дисциплина", conflicting_field="title", conflicting_value=discipline_data.title)
+            
         db_discipline = models.Discipline(**discipline_data.model_dump())
         db.add(db_discipline)
         db.commit()
         db.refresh(db_discipline)
         return db_discipline
+    except DuplicateEntryException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error creating discipline: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось создать дисциплину: {str(e)}")
 
-def update_discipline(db: Session, discipline_id: int, discipline_update: schemas.DisciplineUpdate) -> Optional[models.Discipline]:
+def update_discipline(db: Session, discipline_id: int, discipline_update: schemas.DisciplineUpdate) -> models.Discipline:
     try:
-        db_discipline = get_discipline(db, discipline_id)
+        db_discipline = db.query(models.Discipline).filter(models.Discipline.id == discipline_id).first()
         if not db_discipline:
-            return None
+            raise NotFoundException(entity_name="Дисциплина для обновления", entity_id=discipline_id)
+            
+        # Проверка на дубликат названия, если название меняется
+        if discipline_update.title and discipline_update.title != db_discipline.title:
+            existing = get_discipline_by_title(db, discipline_update.title)
+            if existing and existing.id != discipline_id:
+                raise DuplicateEntryException(entity_name="Дисциплина", conflicting_field="title", conflicting_value=discipline_update.title)
+                
         updated_discipline = update_db_object(db_discipline, discipline_update)
         db.add(updated_discipline) # or just db.add(db_discipline) as it's the same object
         db.commit()
         db.refresh(updated_discipline)
         return updated_discipline
+    except (NotFoundException, DuplicateEntryException):
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error updating discipline {discipline_id}: {e}", exc_info=True)
-        raise
+        raise DatabaseOperationException(f"Не удалось обновить дисциплину: {str(e)}")
 
 def delete_discipline(db: Session, discipline_id: int) -> bool:
     try:
-        db_discipline = get_discipline(db, discipline_id)
+        db_discipline = db.query(models.Discipline).filter(models.Discipline.id == discipline_id).first()
         if not db_discipline:
-            return False
+            raise NotFoundException(entity_name="Дисциплина для удаления", entity_id=discipline_id)
+            
         db.delete(db_discipline)
         db.commit()
         return True
+    except NotFoundException:
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error deleting discipline {discipline_id}: {e}", exc_info=True)
-        raise 
+        raise DatabaseOperationException(f"Не удалось удалить дисциплину: {str(e)}") 
