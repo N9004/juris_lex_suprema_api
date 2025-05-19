@@ -1,0 +1,27 @@
+@font-face {
+    font-family: 'Liter';
+    src: url('Liter-Regular.woff2') format('woff2'),
+        url('Liter-Regular.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Carabine';
+    src: url('Carabine-Medium.woff2') format('woff2'),
+        url('Carabine-Medium.woff') format('woff');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Widock TRIAL';
+    src: url('WidockTRIAL-Bold.woff2') format('woff2'),
+        url('WidockTRIAL-Bold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+

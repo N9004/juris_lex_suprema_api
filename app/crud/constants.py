@@ -1,0 +1,16 @@
+# app/crud/constants.py
+
+# --- Константы ---
+XP_PER_LESSON_COMPLETION = 10
+VERIFICATION_CODE_LENGTH = 6
+VERIFICATION_CODE_EXPIRE_MINUTES = 15
+
+# --- Константы для XP ---
+XP_FOR_FIRST_COMPLETION = 10
+XP_FOR_SECOND_COMPLETION = 5
+XP_FOR_SUBSEQUENT_COMPLETIONS = 3
+XP_FOR_CORRECT_ANSWER = 1
+
+# --- Константы для кэширования ---
+CACHE_TTL = 300  # 5 минут в секундах
+MAX_CACHE_SIZE = 1000 

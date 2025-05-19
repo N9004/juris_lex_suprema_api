@@ -1,0 +1,60 @@
+# Фронтенд (Vite + React + TS)
+node_modules/
+dist/
+.vite/
+coverage/
+*.local
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.idea/
+.vscode/
+# Лог-файлы сборки TypeScript
+*.tsbuildinfo
+
+# Бэкенд (Python + FastAPI)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+# Виртуальные окружения
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+# База данных SQLite (если ты не хочешь ее версионировать)
+# Если ты хочешь версионировать пустую схему или тестовые данные,
+# то не добавляй это, но для реальной БД с данными это обычно нужно.
+juris_lex_suprema.db
+juris_lex_suprema.db-journal # Временный файл SQLite
+# Alembic (если папка создается вне основного кода и содержит временные файлы)
+# alembic.ini и alembic/env.py, alembic/versions/ обычно версионируются.
+# Файлы IDE
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

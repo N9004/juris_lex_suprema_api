@@ -1,0 +1,164 @@
+/* src/index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* CSS переменные для удобства, если понадобятся */
+  :root {
+    --gradient-color-ivory-center: theme('colors.brand-gradient-ivory-center', '#F4F8F4');
+    --gradient-color-red-edge: theme('colors.brand-gradient-red-edge', 'rgba(192, 0, 0, 0.35)');
+    --gradient-color-blue-edge: theme('colors.brand-gradient-blue-edge', 'rgba(0, 81, 174, 0.35)');
+    --color-brand-text: theme('colors.brand-text', '#333333');
+    --color-brand-input-bg: theme('colors.brand-input-bg', 'rgba(51, 51, 51, 0.05)');
+    --color-brand-input-border-focus: theme('colors.brand-input-border-focus', '#333333');
+    --color-brand-button-dark: theme('colors.brand-button-dark', '#333333');
+    --color-brand-button-text-light: theme('colors.brand-button-text-light', '#F4F8F4');
+    --color-brand-ivory-bg: theme('colors.brand-ivory-bg', '#F4F8F4');
+    --primary-color: #1e40af;
+    --secondary-color: #0369a1;
+    --tertiary-color: #b91c1c;
+    --success-color: #15803d;
+    --warning-color: #b45309;
+    --error-color: #b91c1c;
+    
+    --text-color: #1f2937;
+    --text-light: #6b7280;
+    --text-lighter: #9ca3af;
+    
+    --bg-color: #f9fafb;
+    --bg-card: rgba(255, 255, 255, 0.8);
+    
+    --border-radius-sm: 4px;
+    --border-radius-md: 8px;
+    --border-radius-lg: 16px;
+    
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.1);
+    
+    --transition-fast: 0.2s;
+    --transition-normal: 0.3s;
+    --transition-slow: 0.5s;
+    
+    /* RGB варианты цветов */
+    --primary-color-rgb: 30, 64, 175;
+    --secondary-color-rgb: 3, 105, 161;
+    --tertiary-color-rgb: 185, 28, 28;
+    --success-color-rgb: 21, 128, 61;
+  }
+
+  @font-face {
+    font-family: 'WidockTRIAL-Bold';
+    src: url('/fonts/WidockTRIAL-Bold.woff2') format('woff2');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Carabine-Medium';
+    src: url('/fonts/Carabine-Medium.woff2') format('woff2');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: 'Liter-Regular';
+    src: url('/fonts/Liter-Regular.woff2') format('woff2');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  body {
+    @apply bg-brand-ivory-bg text-brand-text min-h-screen antialiased;
+    font-family: theme('fontFamily.liter', 'Liter-Regular, sans-serif');
+    margin: 0;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: theme('fontFamily.carabine', 'Carabine-Medium, sans-serif');
+  }
+
+  input::placeholder {
+    @apply text-brand-text/50; /* Чуть менее контрастный плейсхолдер */
+  }
+}
+
+@keyframes gradientAnimation {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.font-widock {
+  font-family: 'WidockTRIAL-Bold', serif;
+}
+
+.font-carabine {
+  font-family: 'Carabine-Medium', sans-serif;
+}
+
+.font-liter {
+  font-family: 'Liter-Regular', sans-serif;
+}
+
+/* Основные стили */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text-color);
+  background-color: var(--bg-color);
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+a {
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button, input, textarea, select {
+  font-family: inherit;
+}
+
+/* Стили для скроллбара */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
